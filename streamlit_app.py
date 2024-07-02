@@ -1,249 +1,182 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error, r2_score
-import altair as alt
-import time
-import zipfile
+from openai import OpenAI
+import requests
+import os
 
 # Page title
-st.set_page_config(page_title='ML model builder', page_icon='🏗️')
-st.title('🏗️ ML model builder')
+st.set_page_config(page_title='SquadS Blog from URLs generator', page_icon='📝')
+st.title('📝 SquadS Blog from URLs generator')
 
-with st.expander('About this app'):
-  st.markdown('**What can this app do?**')
-  st.info('This app allow users to build a machine learning (ML) model in an end-to-end workflow. Particularly, this encompasses data upload, data pre-processing, ML model building and post-model analysis.')
+# Initialize OpenAI client
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-  st.markdown('**How to use the app?**')
-  st.warning('To engage with the app, go to the sidebar and 1. Select a data set and 2. Adjust the model parameters by adjusting the various slider widgets. As a result, this would initiate the ML model building process, display the model results as well as allowing users to download the generated models and accompanying data.')
+# Initialize session state
+if 'ideas' not in st.session_state:
+    st.session_state.ideas = []
+if 'generated_blogs' not in st.session_state:
+    st.session_state.generated_blogs = {}
+if 'urls' not in st.session_state:
+    st.session_state.urls = [""]
 
-  st.markdown('**Under the hood**')
-  st.markdown('Data sets:')
-  st.code('''- Drug solubility data set
-  ''', language='markdown')
-  
-  st.markdown('Libraries used:')
-  st.code('''- Pandas for data wrangling
-- Scikit-learn for building a machine learning model
-- Altair for chart creation
-- Streamlit for user interface
-  ''', language='markdown')
+# Function to add a new URL input field
+def add_url():
+    st.session_state.urls.append("")
 
+# Function to remove a URL input field
+def remove_url(index):
+    st.session_state.urls.pop(index)
+    if not st.session_state.urls:
+        st.session_state.urls = [""]
+
+# Function to retrieve website content
+def get_website_content(url):
+    api_url = f"https://r.jina.ai/{url}"
+    response = requests.get(api_url)
+    if response.status_code == 200:
+        return response.text
+    else:
+        return f"Error al obtener contenido del sitio web: {response.status_code}"
+
+# Function to generate blog ideas
+def generate_blog_ideas(website_contents, num_ideas, tone, length, model):
+    prompt = f"""
+    Basándote en el siguiente contenido de sitios web, genera {num_ideas} ideas para blogs.
+    Usa un tono {tone} y apunta a aproximadamente {length} caracteres por idea de blog.
+    
+    Contenido de los sitios web:
+    {website_contents}
+    
+    Por favor, devuelve las ideas en el siguiente formato:
+    1. [Título de la idea]: Breve descripción de la idea.
+    2. [Título de la idea]: Breve descripción de la idea.
+    3. [Título de la idea]: Breve descripción de la idea.
+    ...
+
+    Ejemplo:
+    1. El Poder de la Colaboración en el Emprendimiento: El Enfoque de SquadS Ventures: Conoce en detalle cómo SquadS Ventures fomenta la colaboración como un motor fundamental para el crecimiento sostenible de los negocios. Exploraremos cómo las alianzas estratégicas pueden potenciar el impacto positivo de las startups en la región, generando sinergias que fortalecen la resiliencia y adaptabilidad de las empresas emergentes.
+
+    La idea y la descripción deben que estar en la misma linea. 
+    
+    Asegúrate de que cada idea sea única, interesante y relevante para el contenido proporcionado.
+    """
+    
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": "Eres un asistente útil que genera ideas creativas y relevantes para blogs basadas en el contenido de sitios web."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    
+    ideas = response.choices[0].message.content.split("\n")
+    return [idea.strip() for idea in ideas if idea.strip()]
+
+# Function to generate blog content
+def generate_blog_content(idea, website_contents, tone, length, model):
+    prompt = f"""
+    Escribe una entrada de blog basada en la siguiente idea: '{idea}'.
+    Usa un tono {tone} y apunta a aproximadamente {length} caracteres.
+    
+    Utiliza el siguiente contenido de sitios web como inspiración y fuente de información:
+    {website_contents}
+
+    Solo retorna el blog, es innecesario compartir información que no aporta al usuario. Este blog será directamente publicado al blog oficial por lo que por favor evita retornar información innecesaria al lector.
+    
+    Retorna el blog en Markdown, incluyendo encabezados apropiados, párrafos y cualquier formato relevante.
+    Asegúrate de que el contenido sea original, bien estructurado y atractivo para los lectores.
+    """
+    
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": "Eres un asistente útil que escribe entradas de blog en formato Markdown, utilizando contenido de sitios web como inspiración."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    
+    return response.choices[0].message.content
+
+# Function to display ideas as cards and handle blog generation
+def display_idea_cards():
+    for i, idea in enumerate(st.session_state.ideas):
+        with st.expander(f"{idea[:100]}...", expanded=True):
+            st.write(idea)
+            if f"blog_{i}" not in st.session_state.generated_blogs:
+                if st.button(f"Generar Blog para la Idea {i+1}", key=f"gen_blog_{i}"):
+                    with st.spinner("Generando blog..."):
+                        website_contents = "\n".join([get_website_content(url) for url in st.session_state.urls if url.strip()])
+                        content = generate_blog_content(idea, website_contents, st.session_state.tone, st.session_state.length, st.session_state.model)
+                        st.session_state.generated_blogs[f"blog_{i}"] = content
+                    st.success("¡Blog generado con éxito!")
+                    # st.rerun()
+            
+            if f"blog_{i}" in st.session_state.generated_blogs:
+                st.markdown(st.session_state.generated_blogs[f"blog_{i}"])
+                
+                # Refinement interface
+                user_input = st.text_input("Haz una pregunta o sugiere una mejora:", key=f"refine_input_{i}")
+                if st.button("Refinar Blog", key=f"refine_button_{i}"):
+                    refined_content = refine_blog(st.session_state.generated_blogs[f"blog_{i}"], user_input, st.session_state.model)
+                    st.session_state.generated_blogs[f"blog_{i}"] = refined_content
+                    # st.rerun()
+
+# Function to refine blog
+def refine_blog(original_content, user_input, model):
+    prompt = f"""
+    Contenido original del blog (en formato Markdown):
+
+    {original_content}
+
+    Solicitud del usuario: {user_input}
+
+    Por favor, refina la entrada del blog basándote en la solicitud del usuario. Asegúrate de que el blog refinado siga en formato Markdown y mantenga un tono y estilo coherentes con el original.
+    """
+    
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": "Eres un asistente útil que refina entradas de blog manteniendo el formato Markdown y mejorando el contenido según las solicitudes de los usuarios."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    
+    return response.choices[0].message.content
 
 # Sidebar for accepting input parameters
 with st.sidebar:
-    # Load data
-    st.header('1.1. Input data')
-
-    st.markdown('**1. Use custom data**')
-    uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
-    if uploaded_file is not None:
-        df = pd.read_csv(uploaded_file, index_col=False)
-      
-    # Download example data
-    @st.cache_data
-    def convert_df(input_df):
-        return input_df.to_csv(index=False).encode('utf-8')
-    example_csv = pd.read_csv('https://raw.githubusercontent.com/dataprofessor/data/master/delaney_solubility_with_descriptors.csv')
-    csv = convert_df(example_csv)
-    st.download_button(
-        label="Download example CSV",
-        data=csv,
-        file_name='delaney_solubility_with_descriptors.csv',
-        mime='text/csv',
-    )
-
-    # Select example data
-    st.markdown('**1.2. Use example data**')
-    example_data = st.toggle('Load example data')
-    if example_data:
-        df = pd.read_csv('https://raw.githubusercontent.com/dataprofessor/data/master/delaney_solubility_with_descriptors.csv')
-
-    st.header('2. Set Parameters')
-    parameter_split_size = st.slider('Data split ratio (% for Training Set)', 10, 90, 80, 5)
-
-    st.subheader('2.1. Learning Parameters')
-    with st.expander('See parameters'):
-        parameter_n_estimators = st.slider('Number of estimators (n_estimators)', 0, 1000, 100, 100)
-        parameter_max_features = st.select_slider('Max features (max_features)', options=['all', 'sqrt', 'log2'])
-        parameter_min_samples_split = st.slider('Minimum number of samples required to split an internal node (min_samples_split)', 2, 10, 2, 1)
-        parameter_min_samples_leaf = st.slider('Minimum number of samples required to be at a leaf node (min_samples_leaf)', 1, 10, 2, 1)
-
-    st.subheader('2.2. General Parameters')
-    with st.expander('See parameters', expanded=False):
-        parameter_random_state = st.slider('Seed number (random_state)', 0, 1000, 42, 1)
-        parameter_criterion = st.select_slider('Performance measure (criterion)', options=['squared_error', 'absolute_error', 'friedman_mse'])
-        parameter_bootstrap = st.select_slider('Bootstrap samples when building trees (bootstrap)', options=[True, False])
-        parameter_oob_score = st.select_slider('Whether to use out-of-bag samples to estimate the R^2 on unseen data (oob_score)', options=[False, True])
-
-    sleep_time = st.slider('Sleep time', 0, 3, 0)
-
-# Initiate the model building process
-if uploaded_file or example_data: 
-    with st.status("Running ...", expanded=True) as status:
+    st.header('1. Parámetros de Entrada')
     
-        st.write("Loading data ...")
-        time.sleep(sleep_time)
+    # Improved URL input
+    st.subheader("Ingrese URLs")
+    for i, url in enumerate(st.session_state.urls):
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.session_state.urls[i] = st.text_input(f"URL {i+1}", value=url, key=f"url_{i}")
+        with col2:
+            if st.button("Eliminar", key=f"remove_{i}"):
+                remove_url(i)
+    
+    if st.button("Agregar URL"):
+        add_url()
 
-        st.write("Preparing data ...")
-        time.sleep(sleep_time)
-        X = df.iloc[:,:-1]
-        y = df.iloc[:,-1]
-            
-        st.write("Splitting data ...")
-        time.sleep(sleep_time)
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=(100-parameter_split_size)/100, random_state=parameter_random_state)
+    num_ideas = st.slider('Número de ideas para blogs', 1, 15, 5)
+    st.session_state.tone = st.text_input('Tono para la generación del blog', 'profesional')
+    st.session_state.length = st.slider('Longitud aproximada del blog (caracteres)', 250, 10000, 1000)
+    st.session_state.model = st.selectbox('Seleccione el modelo de OpenAI', ['gpt-3.5-turbo', 'gpt-4o'])
     
-        st.write("Model training ...")
-        time.sleep(sleep_time)
+    if st.button('Generar Ideas'):
+        with st.spinner('Generando ideas para blogs...'):
+            valid_urls = [url for url in st.session_state.urls if url.strip()]
+            if valid_urls:
+                website_contents = "\n".join([get_website_content(url) for url in valid_urls])
+                st.session_state.ideas = generate_blog_ideas(website_contents, num_ideas, st.session_state.tone, st.session_state.length, st.session_state.model)
+                st.success('¡Ideas para blogs generadas!')
+                # st.rerun()
+            else:
+                st.error('Por favor, ingrese al menos una URL válida.')
 
-        if parameter_max_features == 'all':
-            parameter_max_features = None
-            parameter_max_features_metric = X.shape[1]
-        
-        rf = RandomForestRegressor(
-                n_estimators=parameter_n_estimators,
-                max_features=parameter_max_features,
-                min_samples_split=parameter_min_samples_split,
-                min_samples_leaf=parameter_min_samples_leaf,
-                random_state=parameter_random_state,
-                criterion=parameter_criterion,
-                bootstrap=parameter_bootstrap,
-                oob_score=parameter_oob_score)
-        rf.fit(X_train, y_train)
-        
-        st.write("Applying model to make predictions ...")
-        time.sleep(sleep_time)
-        y_train_pred = rf.predict(X_train)
-        y_test_pred = rf.predict(X_test)
-            
-        st.write("Evaluating performance metrics ...")
-        time.sleep(sleep_time)
-        train_mse = mean_squared_error(y_train, y_train_pred)
-        train_r2 = r2_score(y_train, y_train_pred)
-        test_mse = mean_squared_error(y_test, y_test_pred)
-        test_r2 = r2_score(y_test, y_test_pred)
-        
-        st.write("Displaying performance metrics ...")
-        time.sleep(sleep_time)
-        parameter_criterion_string = ' '.join([x.capitalize() for x in parameter_criterion.split('_')])
-        #if 'Mse' in parameter_criterion_string:
-        #    parameter_criterion_string = parameter_criterion_string.replace('Mse', 'MSE')
-        rf_results = pd.DataFrame(['Random forest', train_mse, train_r2, test_mse, test_r2]).transpose()
-        rf_results.columns = ['Method', f'Training {parameter_criterion_string}', 'Training R2', f'Test {parameter_criterion_string}', 'Test R2']
-        # Convert objects to numerics
-        for col in rf_results.columns:
-            rf_results[col] = pd.to_numeric(rf_results[col], errors='ignore')
-        # Round to 3 digits
-        rf_results = rf_results.round(3)
-        
-    status.update(label="Status", state="complete", expanded=False)
-
-    # Display data info
-    st.header('Input data', divider='rainbow')
-    col = st.columns(4)
-    col[0].metric(label="No. of samples", value=X.shape[0], delta="")
-    col[1].metric(label="No. of X variables", value=X.shape[1], delta="")
-    col[2].metric(label="No. of Training samples", value=X_train.shape[0], delta="")
-    col[3].metric(label="No. of Test samples", value=X_test.shape[0], delta="")
-    
-    with st.expander('Initial dataset', expanded=True):
-        st.dataframe(df, height=210, use_container_width=True)
-    with st.expander('Train split', expanded=False):
-        train_col = st.columns((3,1))
-        with train_col[0]:
-            st.markdown('**X**')
-            st.dataframe(X_train, height=210, hide_index=True, use_container_width=True)
-        with train_col[1]:
-            st.markdown('**y**')
-            st.dataframe(y_train, height=210, hide_index=True, use_container_width=True)
-    with st.expander('Test split', expanded=False):
-        test_col = st.columns((3,1))
-        with test_col[0]:
-            st.markdown('**X**')
-            st.dataframe(X_test, height=210, hide_index=True, use_container_width=True)
-        with test_col[1]:
-            st.markdown('**y**')
-            st.dataframe(y_test, height=210, hide_index=True, use_container_width=True)
-
-    # Zip dataset files
-    df.to_csv('dataset.csv', index=False)
-    X_train.to_csv('X_train.csv', index=False)
-    y_train.to_csv('y_train.csv', index=False)
-    X_test.to_csv('X_test.csv', index=False)
-    y_test.to_csv('y_test.csv', index=False)
-    
-    list_files = ['dataset.csv', 'X_train.csv', 'y_train.csv', 'X_test.csv', 'y_test.csv']
-    with zipfile.ZipFile('dataset.zip', 'w') as zipF:
-        for file in list_files:
-            zipF.write(file, compress_type=zipfile.ZIP_DEFLATED)
-
-    with open('dataset.zip', 'rb') as datazip:
-        btn = st.download_button(
-                label='Download ZIP',
-                data=datazip,
-                file_name="dataset.zip",
-                mime="application/octet-stream"
-                )
-    
-    # Display model parameters
-    st.header('Model parameters', divider='rainbow')
-    parameters_col = st.columns(3)
-    parameters_col[0].metric(label="Data split ratio (% for Training Set)", value=parameter_split_size, delta="")
-    parameters_col[1].metric(label="Number of estimators (n_estimators)", value=parameter_n_estimators, delta="")
-    parameters_col[2].metric(label="Max features (max_features)", value=parameter_max_features_metric, delta="")
-    
-    # Display feature importance plot
-    importances = rf.feature_importances_
-    feature_names = list(X.columns)
-    forest_importances = pd.Series(importances, index=feature_names)
-    df_importance = forest_importances.reset_index().rename(columns={'index': 'feature', 0: 'value'})
-    
-    bars = alt.Chart(df_importance).mark_bar(size=40).encode(
-             x='value:Q',
-             y=alt.Y('feature:N', sort='-x')
-           ).properties(height=250)
-
-    performance_col = st.columns((2, 0.2, 3))
-    with performance_col[0]:
-        st.header('Model performance', divider='rainbow')
-        st.dataframe(rf_results.T.reset_index().rename(columns={'index': 'Parameter', 0: 'Value'}))
-    with performance_col[2]:
-        st.header('Feature importance', divider='rainbow')
-        st.altair_chart(bars, theme='streamlit', use_container_width=True)
-
-    # Prediction results
-    st.header('Prediction results', divider='rainbow')
-    s_y_train = pd.Series(y_train, name='actual').reset_index(drop=True)
-    s_y_train_pred = pd.Series(y_train_pred, name='predicted').reset_index(drop=True)
-    df_train = pd.DataFrame(data=[s_y_train, s_y_train_pred], index=None).T
-    df_train['class'] = 'train'
-        
-    s_y_test = pd.Series(y_test, name='actual').reset_index(drop=True)
-    s_y_test_pred = pd.Series(y_test_pred, name='predicted').reset_index(drop=True)
-    df_test = pd.DataFrame(data=[s_y_test, s_y_test_pred], index=None).T
-    df_test['class'] = 'test'
-    
-    df_prediction = pd.concat([df_train, df_test], axis=0)
-    
-    prediction_col = st.columns((2, 0.2, 3))
-    
-    # Display dataframe
-    with prediction_col[0]:
-        st.dataframe(df_prediction, height=320, use_container_width=True)
-
-    # Display scatter plot of actual vs predicted values
-    with prediction_col[2]:
-        scatter = alt.Chart(df_prediction).mark_circle(size=60).encode(
-                        x='actual',
-                        y='predicted',
-                        color='class'
-                  )
-        st.altair_chart(scatter, theme='streamlit', use_container_width=True)
-
-    
-# Ask for CSV upload if none is detected
+# Main content area
+if st.session_state.ideas:
+    display_idea_cards()
 else:
-    st.warning('👈 Upload a CSV file or click *"Load example data"* to get started!')
+    st.warning('👈 Ingrese URLs y haga clic en "Generar Ideas" para comenzar!')
