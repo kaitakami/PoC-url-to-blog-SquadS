@@ -82,7 +82,7 @@ def generate_blog_content(idea, website_contents, tone, length, model):
 
     Solo retorna el blog, es innecesario compartir información que no aporta al usuario. Este blog será directamente publicado al blog oficial por lo que por favor evita retornar información innecesaria al lector.
     
-    Retorna el blog en Markdown, incluyendo encabezados apropiados, párrafos y cualquier formato relevante.
+    Retorna el blog en Markdown, incluyendo encabezados apropiados, párrafos y cualquier formato relevante. No retornes entre ``` simplemente retorna el markdown sin encapsularlo en ningún formato.
     Asegúrate de que el contenido sea original, bien estructurado y atractivo para los lectores.
     """
     
